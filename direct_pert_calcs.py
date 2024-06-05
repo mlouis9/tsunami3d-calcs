@@ -262,15 +262,16 @@ class Tsunami3DCEOutput(Output):
 class KenoVIOutput(Output):
     def __init__(self, filename):
         super().__init__(filename)
-        self.keff, self.keff_uncertainty = self._get_keff_and_uncertainty()
+        self.keff = self._get_keff()
     
-    def _get_keff_and_uncertainty(self):
+    def _get_keff(self):
         # Skip lines that are not needed
         unused_lines = SkipTo(Literal("best estimate system k-eff"))
 
         keff_and_uncertainty = Suppress(unused_lines + Literal("best estimate system k-eff")) + \
                pyparsing_common.fnumber + Suppress(Literal("+ or -")) + pyparsing_common.fnumber
-        return keff_and_uncertainty.parseString(self.data)
+        result = keff_and_uncertainty.parseString(self.data)
+        return ufloat(result[0], result[1])
 
 class DirectPerturbationCalculation(ABC):
     """Class to perform direct perturbation calculations for a given case. This class will read the nominal output file and use
@@ -312,19 +313,38 @@ class DirectPerturbationCalculation(ABC):
         """Name of the calculation sequence for doing the direct perturbation calculation, e.g. tsunami-1dc"""
         pass
 
-    @abstractmethod
-    def _run_and_process_direct_perturbation_calculation(self):
-        pass
+    def _run_and_process_direct_perturbation_calculation(self, mixture, nuclide):
+        dp_sensitivity, keffs, delta_rhos = self._run_direct_perturbation_calculation(nuclide, mixture)
 
-    @abstractmethod
-    def _calculate_sensitivity_edits(self, perturbation_outputs, rho_deltas, rho_nom, nom_keff):
-        """Calculate sensitivity edits, e.g. sensitivity coefficient, and for monte carlo cases the
-        uncertainty, etc."""
-        pass
-
-    @abstractmethod
+        # Now store the dp sensitivity in the nominal_total_sensitivity_coefficients dict
+        this_row = self.nominal_total_sensitivity_coefficients[mixture][nuclide]
+        this_row.update({"direct_perturbation_sensitivity": dp_sensitivity})
+        this_row.update({"relative_error": (this_row['sensitivity'] - dp_sensitivity)/this_row['sensitivity']*100})
+        
+        # Parameters for the dp calculation
+        this_row.update({"keff+": keffs[1]})
+        this_row.update({"keff-": keffs[0]})
+        this_row.update({"delta_rho+": delta_rhos[1]})
+        this_row.update({"delta_rho-": delta_rhos[0]})
+    
     def _output_sensitivities(self):
-        pass
+        header = ['Mixture', 'Nuclide', 'Atom Density', 'Tsunami 1D Sensitivity', 'Direct Perturbation Sensitivity', \
+                  'Relative Error (%)', 'k-eff+', 'k-eff-', 'Δρ+', 'Δρ-']
+        rows = []
+        for mixture in self.nominal_total_sensitivity_coefficients.keys():
+            for nuclide in self.nominal_total_sensitivity_coefficients[mixture].keys():
+                properties = self.nominal_total_sensitivity_coefficients[mixture][nuclide]
+                row = [mixture, nuclide] + [properties['atom_density'], properties['sensitivity'], \
+                                            properties['direct_perturbation_sensitivity'], properties['relative_error'], \
+                                            properties['keff+'], properties['keff-'], properties['delta_rho+'], properties['delta_rho-']]
+                rows.append(row)
+
+        with open(f'sphere_model_{(self.case).model_number}_comparison.csv', 'w') as f:
+            f.write(','.join(header) + '\n')
+            for row in rows:
+                # Format the row and write it to the file
+                f.write(','.join(map(str, row[:2])) + f", {row[2]:1.4E}, {row[3]:1.4E}, {row[4]:1.4E}, {row[5]:2.1f}, " \
+                        + ','.join(map(str, row[6:8])) + f", {row[8]:1.4E}, {row[9]:1.4E}" + '\n')
 
     def _run_direct_perturbation_calculation(self, nuclide: str, mixture: str, num_density_points=2):
         """Do the direct perturbation calculation for a given nuclide and mixture, with a default density discretization of 2
@@ -395,7 +415,10 @@ class DirectPerturbationCalculation(ABC):
         # Calculate Edits (Sensitivity coefficients, etc.)
         # ------------------------------------------------
 
-        return self._calculate_sensitivity_edits(perturbation_outputs, rho_deltas, rho_nom, nom_keff)
+        keffs = [output.keff for output in perturbation_outputs]
+        sensitivity_coefficient = rho_nom/nom_keff*(keffs[1] - keffs[0]) / (rho_deltas[1] - rho_deltas[0])
+
+        return sensitivity_coefficient, (keffs[0], keffs[1]), (rho_deltas[0], rho_deltas[1])
 
     def _material_perturbation(self, mixture: str, nuclide: str, rho_delta: float):
         # Get nominal material composition
@@ -436,45 +459,6 @@ class Tsunami1D_DPCalculation(DirectPerturbationCalculation):
     
     def _direct_calculation_sequence(self) -> str:
         return 'tsunami-1dc'
-    
-    def _run_and_process_direct_perturbation_calculation(self, mixture, nuclide):
-        dp_sensitivity, keffs, delta_rhos = self._run_direct_perturbation_calculation(nuclide, mixture)
-
-        # Now store the dp sensitivity in the nominal_total_sensitivity_coefficients dict
-        this_row = self.nominal_total_sensitivity_coefficients[mixture][nuclide]
-        this_row.update({"direct_perturbation_sensitivity": dp_sensitivity})
-        this_row.update({"relative_error": (this_row['sensitivity'] - dp_sensitivity)/this_row['sensitivity']*100})
-        
-        # Parameters for the dp calculation
-        this_row.update({"keff+": keffs[1]})
-        this_row.update({"keff-": keffs[0]})
-        this_row.update({"delta_rho+": delta_rhos[1]})
-        this_row.update({"delta_rho-": delta_rhos[0]})
-
-    def _calculate_sensitivity_edits(self, perturbation_outputs, rho_deltas, rho_nom, nom_keff):
-        keffs = [output.keff for output in perturbation_outputs]
-        sensitivity_coefficient = rho_nom/nom_keff*(keffs[1] - keffs[0]) / (rho_deltas[1] - rho_deltas[0])
-
-        return sensitivity_coefficient, (keffs[0], keffs[1]), (rho_deltas[0], rho_deltas[1])
-    
-    def _output_sensitivities(self):
-        header = ['Mixture', 'Nuclide', 'Atom Density', 'Tsunami 1D Sensitivity', 'Direct Perturbation Sensitivity', \
-                  'Relative Error (%)', 'k-eff+', 'k-eff-', 'Δρ+', 'Δρ-']
-        rows = []
-        for mixture in self.nominal_total_sensitivity_coefficients.keys():
-            for nuclide in self.nominal_total_sensitivity_coefficients[mixture].keys():
-                properties = self.nominal_total_sensitivity_coefficients[mixture][nuclide]
-                row = [mixture, nuclide] + [properties['atom_density'], properties['sensitivity'], \
-                                            properties['direct_perturbation_sensitivity'], properties['relative_error'], \
-                                            properties['keff+'], properties['keff-'], properties['delta_rho+'], properties['delta_rho-']]
-                rows.append(row)
-
-        with open(f'sphere_model_{(self.case).model_number}_comparison.csv', 'w') as f:
-            f.write(','.join(header) + '\n')
-            for row in rows:
-                # Format the row and write it to the file
-                f.write(','.join(map(str, row[:2])) + f", {row[2]:1.4E}, {row[3]:1.4E}, {row[4]:1.4E}, {row[5]:2.1f}, " \
-                        + ','.join(map(str, row[6:8])) + f", {row[8]:1.4E}, {row[9]:1.4E}" + '\n')
 
 class Tsunami3DCE_DPCalculation(DirectPerturbationCalculation):
     def __init__(self, case: Case, template_file, overwrite_output=False):
@@ -488,47 +472,6 @@ class Tsunami3DCE_DPCalculation(DirectPerturbationCalculation):
     
     def _direct_calculation_sequence(self) -> str:
         return 'csas6'
-    
-    def _run_and_process_direct_perturbation_calculation(self, mixture, nuclide):
-        dp_sensitivity, keffs, delta_rhos = self._run_direct_perturbation_calculation(nuclide, mixture)
-
-        # Now store the dp sensitivity in the nominal_total_sensitivity_coefficients dict
-        this_row = self.nominal_total_sensitivity_coefficients[mixture][nuclide]
-        this_row.update({"direct_perturbation_sensitivity": dp_sensitivity})
-        this_row.update({"relative_error": (this_row['sensitivity'] - dp_sensitivity)/this_row['sensitivity']*100})
-        
-        # Parameters for the dp calculation
-        this_row.update({"keff+": keffs[1]})
-        this_row.update({"keff-": keffs[0]})
-        this_row.update({"delta_rho+": delta_rhos[1]})
-        this_row.update({"delta_rho-": delta_rhos[0]})
-
-    def _calculate_sensitivity_edits(self, perturbation_outputs, rho_deltas, rho_nom, nom_keff):
-        keffs = [ufloat(output.keff, output.keff_uncertainty) for output in perturbation_outputs]
-        sensitivity_coefficient = rho_nom/nom_keff*(keffs[1] - keffs[0]) / (rho_deltas[1] - rho_deltas[0])
-        # manual_calculation = ((keffs[1].std_dev**2 + keffs[0].std_dev**2)/(keffs[1].nominal_value - keffs[0].nominal_value)**2 + nom_keff.std_dev**2/nom_keff.nominal_value**2)**(1/2)*rho_nom/(rho_deltas[1] - rho_deltas[0])
-        # print(sensitivity_coefficient, manual_calculation)
-
-        return sensitivity_coefficient, (keffs[0], keffs[1]), (rho_deltas[0], rho_deltas[1])
-    
-    def _output_sensitivities(self):
-        header = ['Mixture', 'Nuclide', 'Atom Density', 'Tsunami 1D Sensitivity', 'Direct Perturbation Sensitivity', \
-                  'Relative Error (%)', 'k-eff+', 'k-eff-', 'Δρ+', 'Δρ-']
-        rows = []
-        for mixture in self.nominal_total_sensitivity_coefficients.keys():
-            for nuclide in self.nominal_total_sensitivity_coefficients[mixture].keys():
-                properties = self.nominal_total_sensitivity_coefficients[mixture][nuclide]
-                row = [mixture, nuclide] + [properties['atom_density'], properties['sensitivity'], \
-                                            properties['direct_perturbation_sensitivity'], properties['relative_error'], \
-                                            properties['keff+'], properties['keff-'], properties['delta_rho+'], properties['delta_rho-']]
-                rows.append(row)
-
-        with open(f'sphere_model_{(self.case).model_number}_comparison.csv', 'w') as f:
-            f.write(','.join(header) + '\n')
-            for row in rows:
-                # Format the row and write it to the file
-                f.write(','.join(map(str, row[:2])) + f", {row[2]:1.4E}, {row[3]:1.4E}, {row[4]:1.4E}, {row[5]:2.1f}, " \
-                        + ','.join(map(str, row[6:8])) + f", {row[8]:1.4E}, {row[9]:1.4E}" + '\n')
 
 if __name__ == '__main__':
     # First parse the cases
