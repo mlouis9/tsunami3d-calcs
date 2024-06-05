@@ -4,6 +4,7 @@ from string import Template
 import subprocess
 import numpy as np
 import os
+from abc import ABC, abstractmethod
 
 class Cases:
     def __init__(self, case_parameters_yml, case_sequence):
@@ -235,14 +236,14 @@ class Tsunami3DCEOutput(Output):
                pyparsing_common.fnumber + Suppress(Literal("+ or -")) + pyparsing_common.fnumber
         return keff_and_uncertainty.parseString(self.data)
     
-class DirectPerturbationCalculation:
+class DirectPerturbationCalculation(ABC):
     """Class to perform direct perturbation calculations for a given case. This class will read the nominal output file and use
     the case parameters to perform the direct perturbation calculations. The results will be stored in the 
     nominal_total_sensitivity_coefficients and output as a .csv file."""
     def __init__(self, case: Case, overwrite_output=False):
         self.case = case
         self.overwrite_output = overwrite_output
-        self.nominal_output = Tsunami1DOutput(case.case_input.replace('.inp', '.out'))
+        self.nominal_output = self._get_tsunami_output(case.case_input.replace('.inp', '.out'))
         self.nominal_total_sensitivity_coefficients = (self.nominal_output).total_sensitivity_coefficients
         self.nominal_keff = (self.nominal_output).keff
 
@@ -250,25 +251,44 @@ class DirectPerturbationCalculation:
         print(f"Running direct perturbation calculation for model {(self.case).model_number}...")
         for mixture in self.nominal_total_sensitivity_coefficients.keys():
             for nuclide in self.nominal_total_sensitivity_coefficients[mixture].keys():
-                dp_sensitivity, keffs, delta_rhos = self._run_direct_perturbation_calculation(nuclide, mixture)
-
-                # Now store the dp sensitivity in the nominal_total_sensitivity_coefficients dict
-                this_row = self.nominal_total_sensitivity_coefficients[mixture][nuclide]
-                this_row.update({"direct_perturbation_sensitivity": dp_sensitivity})
-                this_row.update({"relative_error": (this_row['sensitivity'] - dp_sensitivity)/this_row['sensitivity']*100})
-                
-                # Parameters for the dp calculation
-                this_row.update({"keff+": keffs[1]})
-                this_row.update({"keff-": keffs[0]})
-                this_row.update({"delta_rho+": delta_rhos[1]})
-                this_row.update({"delta_rho-": delta_rhos[0]})
+                self._run_and_process_direct_perturbation_calculation(mixture, nuclide)
 
         # Finally output sensitivities to .csv
         self._output_sensitivities()
 
+    @abstractmethod
+    def _get_tsunami_output(self, output_path: str):
+        pass
+
+    @abstractmethod
+    def _get_direct_output(self, output_path: str):
+        pass
+
+    @abstractmethod
+    def _direct_calculation_sequence(self) -> str:
+        """Name of the calculation sequence for doing the direct perturbation calculation, e.g. tsunami-1dc"""
+        pass
+
+    @abstractmethod
+    def _run_and_process_direct_perturbation_calculation(self):
+        pass
+
+    @abstractmethod
+    def _calculate_sensitivity_edits(self, perturbation_outputs, rho_deltas, rho_nom, nom_keff):
+        """Calculate sensitivity edits, e.g. sensitivity coefficient, and for monte carlo cases the
+        uncertainty, etc."""
+        pass
+
+    @abstractmethod
+    def _output_sensitivities(self):
+        pass
+
     def _run_direct_perturbation_calculation(self, nuclide: str, mixture: str, num_density_points=2):
         """Do the direct perturbation calculation for a given nuclide and mixture, with a default density discretization of 2
         points"""
+        if num_density_points != 2:
+            raise ValueError('Only two density points are currently supported')
+
         # -----------------------------------------
         # First calculate the density perturbation
         # -----------------------------------------
@@ -277,11 +297,13 @@ class DirectPerturbationCalculation:
         rho_nom = self.nominal_total_sensitivity_coefficients[mixture][nuclide]['atom_density']
         nom_keff = self.nominal_keff
 
+        # The 0.005 (0.5% for a near critical system) is our target change in keff (i.e. Δk), which provides a ≥ 10 σ difference
+        # k+ - k- for σ/k ≤ 0.001
         fractional_rho_delta = (0.005 / nom_keff) / S_tot
         rho_delta = fractional_rho_delta*rho_nom
         rho_deltas = np.linspace(-rho_delta, rho_delta, num_density_points)
 
-        keffs = []
+        perturbation_outputs = []
         for rho_index, rho_delta in enumerate(rho_deltas):
             # -----------------
             # Perturb materials
@@ -305,7 +327,7 @@ class DirectPerturbationCalculation:
                 perturbed_reflector_material,
                 (self.case).reflector_radius,
                 f'sphere_model_{self.case.model_number}/perturbed_{nuclide}_{mixture}_{rho_index+1}.inp',
-                case_sequence='tsunami-1dc'
+                case_sequence=self._direct_calculation_sequence()
             )
 
             # First, make sphere_model_{model_number} directory if it doesn't exist already
@@ -322,19 +344,15 @@ class DirectPerturbationCalculation:
                 new_case.run_case()
 
             # Read the output
-            new_output = Tsunami1DCOutput(output_path)
+            perturbation_output = self._get_direct_output(output_path)
 
-            keffs.append(new_output.keff)
+            perturbation_outputs.append(perturbation_output)
 
-        # ----------------------------------
-        # Calculate Sensitivity Coefficients
-        # ----------------------------------
-        if num_density_points != 2:
-            raise ValueError('Only two density points are currently supported')
-        
-        sensitivity_coefficient = rho_nom/nom_keff*(keffs[1] - keffs[0]) / (rho_deltas[1] - rho_deltas[0])
+        # ------------------------------------------------
+        # Calculate Edits (Sensitivity coefficients, etc.)
+        # ------------------------------------------------
 
-        return sensitivity_coefficient, (keffs[0], keffs[1]), (rho_deltas[0], rho_deltas[1])
+        return self._calculate_sensitivity_edits(perturbation_outputs, rho_deltas, rho_nom, nom_keff)
 
     def _material_perturbation(self, mixture: str, nuclide: str, rho_delta: float):
         # Get nominal material composition
@@ -362,6 +380,40 @@ class DirectPerturbationCalculation:
                 break
 
         return material
+
+
+class Tsunami1DDPCalculation(DirectPerturbationCalculation):
+    def __init__(self, case: Case, overwrite_output=False):
+        super().__init__(case, overwrite_output)
+
+    def _get_tsunami_output(self, output_path: str):
+        return Tsunami1DOutput(output_path)
+    
+    def _get_direct_output(self, output_path: str):
+        return Tsunami1DCOutput(output_path)
+    
+    def _direct_calculation_sequence(self) -> str:
+        return 'tsunami-1dc'
+    
+    def _run_and_process_direct_perturbation_calculation(self, mixture, nuclide):
+        dp_sensitivity, keffs, delta_rhos = self._run_direct_perturbation_calculation(nuclide, mixture)
+
+        # Now store the dp sensitivity in the nominal_total_sensitivity_coefficients dict
+        this_row = self.nominal_total_sensitivity_coefficients[mixture][nuclide]
+        this_row.update({"direct_perturbation_sensitivity": dp_sensitivity})
+        this_row.update({"relative_error": (this_row['sensitivity'] - dp_sensitivity)/this_row['sensitivity']*100})
+        
+        # Parameters for the dp calculation
+        this_row.update({"keff+": keffs[1]})
+        this_row.update({"keff-": keffs[0]})
+        this_row.update({"delta_rho+": delta_rhos[1]})
+        this_row.update({"delta_rho-": delta_rhos[0]})
+
+    def _calculate_sensitivity_edits(self, perturbation_outputs, rho_deltas, rho_nom, nom_keff):
+        keffs = [output.keff for output in perturbation_outputs]
+        sensitivity_coefficient = rho_nom/nom_keff*(keffs[1] - keffs[0]) / (rho_deltas[1] - rho_deltas[0])
+
+        return sensitivity_coefficient, (keffs[0], keffs[1]), (rho_deltas[0], rho_deltas[1])
     
     def _output_sensitivities(self):
         header = ['Mixture', 'Nuclide', 'Atom Density', 'Tsunami 1D Sensitivity', 'Direct Perturbation Sensitivity', \
@@ -384,9 +436,9 @@ class DirectPerturbationCalculation:
 
 if __name__ == '__main__':
     # First parse the cases
-    cases = Cases('case_parameters.yml').cases
+    cases = Cases('case_parameters.yml', case_sequence='tsunami-1d').cases
 
     # Assume the nominal (TSUNAMI-1D) cases have already been run, now do the direct perturbation calculations
     for case in cases:
         # Now perform a direct perturbation calculation
-        DirectPerturbationCalculation(case)
+        Tsunami1DDPCalculation(case)

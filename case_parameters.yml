@@ -13,7 +13,11 @@ reflector_materials:
     c-13  10 0 5.1621E-4 end
 
   nickel: |
-    ni    10 0 9.1322E-2 end
+    ni-58         10 0 6.216919E-2 end
+    ni-60         10 0 2.394746E-2 end
+    ni-61         10 0 1.040979E-3 end
+    ni-62         10 0 3.319098E-3 end
+    ni-64         10 0 8.452770E-4 end
 
 heu_material: |
   u-234 1 0 4.9210E-4 end
