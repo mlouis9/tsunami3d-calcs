@@ -5,6 +5,7 @@ import subprocess
 import numpy as np
 import os
 from abc import ABC, abstractmethod
+from uncertainties import ufloat
 
 class Cases:
     def __init__(self, case_parameters_yml, case_sequence):
@@ -195,7 +196,7 @@ class Tsunami3DCEOutput(Output):
     "Parse output from TSUNAMI-3D CE cases"
     def __init__(self, filename):
         super().__init__(filename)
-        self.keff, self.keff_uncertainty = self._get_keff_and_uncertainty()
+        self.keff = self._get_keff()
         self.total_sensitivity_coefficients = self._get_total_sensitivity_coefficients()
         
     def _get_total_sensitivity_coefficients(self):
@@ -226,8 +227,43 @@ class Tsunami3DCEOutput(Output):
                 header_line + LineEnd()
             ) + \
             data_block
-        return total_sensitivity_coefficients_parser.parseString(self.data)
+        parsed_data = total_sensitivity_coefficients_parser.parseString(self.data)
 
+        # Now parse the list of row lists into a dictionary of dictionaries, where the outer dictionary is keyed by
+        # mixture and the inner dictionary is keyed by nuclide
+
+        total_sensitivity_coefficients = {}
+        for row in parsed_data:
+            mixture = str(row[0])
+            nuclide = row[1]
+            atom_density = row[2]
+            sensitivity = row[3]
+            sensitivity_std_dev = row[4]
+
+            if mixture not in total_sensitivity_coefficients.keys():
+                total_sensitivity_coefficients[mixture] = {}
+            
+            total_sensitivity_coefficients[mixture][nuclide] = {
+                'atom_density': atom_density,
+                'sensitivity': ufloat(sensitivity, sensitivity_std_dev)
+            }
+
+        return total_sensitivity_coefficients
+
+    def _get_keff(self):
+        # Skip lines that are not needed
+        unused_lines = SkipTo(Literal("best estimate system k-eff"))
+
+        keff_and_uncertainty = Suppress(unused_lines + Literal("best estimate system k-eff")) + \
+               pyparsing_common.fnumber + Suppress(Literal("+ or -")) + pyparsing_common.fnumber
+        result = keff_and_uncertainty.parseString(self.data)
+        return ufloat(result[0], result[1])
+
+class KenoVIOutput(Output):
+    def __init__(self, filename):
+        super().__init__(filename)
+        self.keff, self.keff_uncertainty = self._get_keff_and_uncertainty()
+    
     def _get_keff_and_uncertainty(self):
         # Skip lines that are not needed
         unused_lines = SkipTo(Literal("best estimate system k-eff"))
@@ -235,7 +271,7 @@ class Tsunami3DCEOutput(Output):
         keff_and_uncertainty = Suppress(unused_lines + Literal("best estimate system k-eff")) + \
                pyparsing_common.fnumber + Suppress(Literal("+ or -")) + pyparsing_common.fnumber
         return keff_and_uncertainty.parseString(self.data)
-    
+
 class DirectPerturbationCalculation(ABC):
     """Class to perform direct perturbation calculations for a given case. This class will read the nominal output file and use
     the case parameters to perform the direct perturbation calculations. The results will be stored in the 
@@ -243,9 +279,14 @@ class DirectPerturbationCalculation(ABC):
     def __init__(self, case: Case, overwrite_output=False):
         self.case = case
         self.overwrite_output = overwrite_output
-        self.nominal_output = self._get_tsunami_output(case.case_input.replace('.inp', '.out'))
-        self.nominal_total_sensitivity_coefficients = (self.nominal_output).total_sensitivity_coefficients
-        self.nominal_keff = (self.nominal_output).keff
+        self.nominal_output = None
+        self.nominal_total_sensitivity_coefficients = None
+        self.nominal_keff = None
+
+    def run_calculation(self):
+        nominal_output = self._get_tsunami_output(case.case_input.replace('.inp', '.out'))
+        self.nominal_total_sensitivity_coefficients = nominal_output.total_sensitivity_coefficients
+        self.nominal_keff = nominal_output.keff
 
         # Run the direct perturbation calculation for each nuclide and mixture in the nominal_total_sensitivity_coefficients dict
         print(f"Running direct perturbation calculation for model {(self.case).model_number}...")
@@ -255,6 +296,7 @@ class DirectPerturbationCalculation(ABC):
 
         # Finally output sensitivities to .csv
         self._output_sensitivities()
+        pass
 
     @abstractmethod
     def _get_tsunami_output(self, output_path: str):
@@ -299,7 +341,7 @@ class DirectPerturbationCalculation(ABC):
 
         # The 0.005 (0.5% for a near critical system) is our target change in keff (i.e. Δk), which provides a ≥ 10 σ difference
         # k+ - k- for σ/k ≤ 0.001
-        fractional_rho_delta = (0.005 / nom_keff) / S_tot
+        fractional_rho_delta = ((0.005 / nom_keff) / S_tot).nominal_value
         rho_delta = fractional_rho_delta*rho_nom
         rho_deltas = np.linspace(-rho_delta, rho_delta, num_density_points)
 
@@ -381,8 +423,7 @@ class DirectPerturbationCalculation(ABC):
 
         return material
 
-
-class Tsunami1DDPCalculation(DirectPerturbationCalculation):
+class Tsunami1D_DPCalculation(DirectPerturbationCalculation):
     def __init__(self, case: Case, overwrite_output=False):
         super().__init__(case, overwrite_output)
 
@@ -434,11 +475,66 @@ class Tsunami1DDPCalculation(DirectPerturbationCalculation):
                 f.write(','.join(map(str, row[:2])) + f", {row[2]:1.4E}, {row[3]:1.4E}, {row[4]:1.4E}, {row[5]:2.1f}, " \
                         + ','.join(map(str, row[6:8])) + f", {row[8]:1.4E}, {row[9]:1.4E}" + '\n')
 
+class Tsunami3DCE_DPCalculation(DirectPerturbationCalculation):
+    def __init__(self, case: Case, overwrite_output=False):
+        super().__init__(case, overwrite_output)
+
+    def _get_tsunami_output(self, output_path: str):
+        return Tsunami3DCEOutput(output_path)
+    
+    def _get_direct_output(self, output_path: str):
+        return KenoVIOutput(output_path)
+    
+    def _direct_calculation_sequence(self) -> str:
+        return 'csas6'
+    
+    def _run_and_process_direct_perturbation_calculation(self, mixture, nuclide):
+        dp_sensitivity, keffs, delta_rhos = self._run_direct_perturbation_calculation(nuclide, mixture)
+
+        # Now store the dp sensitivity in the nominal_total_sensitivity_coefficients dict
+        this_row = self.nominal_total_sensitivity_coefficients[mixture][nuclide]
+        this_row.update({"direct_perturbation_sensitivity": dp_sensitivity})
+        this_row.update({"relative_error": (this_row['sensitivity'] - dp_sensitivity)/this_row['sensitivity']*100})
+        
+        # Parameters for the dp calculation
+        this_row.update({"keff+": keffs[1]})
+        this_row.update({"keff-": keffs[0]})
+        this_row.update({"delta_rho+": delta_rhos[1]})
+        this_row.update({"delta_rho-": delta_rhos[0]})
+
+    def _calculate_sensitivity_edits(self, perturbation_outputs, rho_deltas, rho_nom, nom_keff):
+        keffs = [ufloat(output.keff, output.keff_uncertainty) for output in perturbation_outputs]
+        sensitivity_coefficient = rho_nom/nom_keff*(keffs[1] - keffs[0]) / (rho_deltas[1] - rho_deltas[0])
+        # manual_calculation = ((keffs[1].std_dev**2 + keffs[0].std_dev**2)/(keffs[1].nominal_value - keffs[0].nominal_value)**2 + nom_keff.std_dev**2/nom_keff.nominal_value**2)**(1/2)*rho_nom/(rho_deltas[1] - rho_deltas[0])
+        # print(sensitivity_coefficient, manual_calculation)
+
+        return sensitivity_coefficient, (keffs[0], keffs[1]), (rho_deltas[0], rho_deltas[1])
+    
+    def _output_sensitivities(self):
+        header = ['Mixture', 'Nuclide', 'Atom Density', 'Tsunami 1D Sensitivity', 'Direct Perturbation Sensitivity', \
+                  'Relative Error (%)', 'k-eff+', 'k-eff-', 'Δρ+', 'Δρ-']
+        rows = []
+        for mixture in self.nominal_total_sensitivity_coefficients.keys():
+            for nuclide in self.nominal_total_sensitivity_coefficients[mixture].keys():
+                properties = self.nominal_total_sensitivity_coefficients[mixture][nuclide]
+                row = [mixture, nuclide] + [properties['atom_density'], properties['sensitivity'], \
+                                            properties['direct_perturbation_sensitivity'], properties['relative_error'], \
+                                            properties['keff+'], properties['keff-'], properties['delta_rho+'], properties['delta_rho-']]
+                rows.append(row)
+
+        with open(f'sphere_model_{(self.case).model_number}_comparison.csv', 'w') as f:
+            f.write(','.join(header) + '\n')
+            for row in rows:
+                # Format the row and write it to the file
+                f.write(','.join(map(str, row[:2])) + f", {row[2]:1.4E}, {row[3]:1.4E}, {row[4]:1.4E}, {row[5]:2.1f}, " \
+                        + ','.join(map(str, row[6:8])) + f", {row[8]:1.4E}, {row[9]:1.4E}" + '\n')
+
 if __name__ == '__main__':
     # First parse the cases
-    cases = Cases('case_parameters.yml', case_sequence='tsunami-1d').cases
+    cases = Cases('case_parameters.yml', case_sequence='tsunami-3d-keno6').cases
 
-    # Assume the nominal (TSUNAMI-1D) cases have already been run, now do the direct perturbation calculations
+    # Assume the nominal cases have already been run, now do the direct perturbation calculations
     for case in cases:
         # Now perform a direct perturbation calculation
-        Tsunami1DDPCalculation(case)
+        calculation = Tsunami3DCE_DPCalculation(case)
+        calculation.run_calculation()
