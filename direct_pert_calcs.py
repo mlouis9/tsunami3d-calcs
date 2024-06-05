@@ -280,12 +280,7 @@ class DirectPerturbationCalculation(ABC):
     def __init__(self, case: Case, template_file, overwrite_output=False):
         self.case = case
         self.overwrite_output = overwrite_output
-        self.nominal_output = None
-        self.nominal_total_sensitivity_coefficients = None
-        self.nominal_keff = None
         self.template_file = template_file
-
-    def run_calculation(self):
         nominal_output = self._get_tsunami_output(case.case_input.replace('.inp', '.out'))
         self.nominal_total_sensitivity_coefficients = nominal_output.total_sensitivity_coefficients
         self.nominal_keff = nominal_output.keff
@@ -298,7 +293,6 @@ class DirectPerturbationCalculation(ABC):
 
         # Finally output sensitivities to .csv
         self._output_sensitivities()
-        pass
 
     @abstractmethod
     def _get_tsunami_output(self, output_path: str):
@@ -481,4 +475,4 @@ if __name__ == '__main__':
     for case in cases:
         # Now perform a direct perturbation calculation
         calculation = Tsunami3DCE_DPCalculation(case, 'sphere_template_dp.inp')
-        calculation.run_calculation()
+        # calculation.run_calculation()
