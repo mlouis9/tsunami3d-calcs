@@ -1,0 +1,71 @@
+reflector_materials:
+  depleted_uranium: |
+    u-234 10 0 4.9210E-4 end
+    u-235 10 0 3.4428E-4 end
+    u-238 10 0 4.7470E-2 end
+
+  tungsten_carbide: |
+    w-182 10 0 1.2697E-2 end
+    w-183 10 0 6.8626E-3 end
+    w-184 10 0 1.4754E-2 end
+    w-186 10 0 1.3744E-2 end
+    c-12  10 0 4.75428E-2 end
+    c-13  10 0 5.1621E-4 end
+
+  nickel: |
+    ni    10 0 9.1322E-2 end
+
+heu_material: |
+  u-234 1 0 4.9210E-4 end
+  u-235 1 0 4.4917E-2 end
+  u-238 1 0 2.5993E-3 end
+
+cases:
+  - model_number: 1
+    heu_radius_cm: 6.7820
+    reflector_material: "depleted_uranium"
+    reflector_thickness_inches: 2
+  - model_number: 2
+    heu_radius_cm: 6.4423
+    reflector_material: "depleted_uranium"
+    reflector_thickness_inches: 3
+  - model_number: 3
+    heu_radius_cm: 6.2851
+    reflector_material: "depleted_uranium"
+    reflector_thickness_inches: 4
+  - model_number: 4
+    heu_radius_cm: 6.1535
+    reflector_material: "depleted_uranium"
+    reflector_thickness_inches: 5
+  - model_number: 5
+    heu_radius_cm: 6.0740
+    reflector_material: "depleted_uranium"
+    reflector_thickness_inches: 7
+  - model_number: 6
+    heu_radius_cm: 6.0509
+    reflector_material: "depleted_uranium"
+    reflector_thickness_inches: 8
+  - model_number: 7
+    heu_radius_cm: 6.0276
+    reflector_material: "depleted_uranium"
+    reflector_thickness_inches: 11
+  - model_number: 8
+    heu_radius_cm: 6.6020
+    reflector_material: "tungsten_carbide"
+    reflector_thickness_inches: 1.9
+  - model_number: 9
+    heu_radius_cm: 6.2527
+    reflector_material: "tungsten_carbide"
+    reflector_thickness_inches: 2.9
+  - model_number: 10
+    heu_radius_cm: 6.0509
+    reflector_material: "tungsten_carbide"
+    reflector_thickness_inches: 4.5
+  - model_number: 11
+    heu_radius_cm: 6.0159
+    reflector_material: "tungsten_carbide"
+    reflector_thickness_inches: 6.5
+  - model_number: 12
+    heu_radius_cm: 6.4627
+    reflector_material: "nickel"
+    reflector_thickness_inches: 8.0
