@@ -276,12 +276,13 @@ class DirectPerturbationCalculation(ABC):
     """Class to perform direct perturbation calculations for a given case. This class will read the nominal output file and use
     the case parameters to perform the direct perturbation calculations. The results will be stored in the 
     nominal_total_sensitivity_coefficients and output as a .csv file."""
-    def __init__(self, case: Case, overwrite_output=False):
+    def __init__(self, case: Case, template_file, overwrite_output=False):
         self.case = case
         self.overwrite_output = overwrite_output
         self.nominal_output = None
         self.nominal_total_sensitivity_coefficients = None
         self.nominal_keff = None
+        self.template_file = template_file
 
     def run_calculation(self):
         nominal_output = self._get_tsunami_output(case.case_input.replace('.inp', '.out'))
@@ -377,7 +378,7 @@ class DirectPerturbationCalculation(ABC):
                 os.makedirs(f'sphere_model_{self.case.model_number}')
 
             # Create the input file
-            new_case.create_input_file('sphere_template.inp')
+            new_case.create_input_file(self.template_file)
 
             print(f"""  Perturbing {nuclide} density with Δρ={rho_delta:1.4E} for mixture {mixture}...""")
             # Run the case if the output file doesn't already exist
@@ -424,8 +425,8 @@ class DirectPerturbationCalculation(ABC):
         return material
 
 class Tsunami1D_DPCalculation(DirectPerturbationCalculation):
-    def __init__(self, case: Case, overwrite_output=False):
-        super().__init__(case, overwrite_output)
+    def __init__(self, case: Case, template_file, overwrite_output=False):
+        super().__init__(case, template_file, overwrite_output)
 
     def _get_tsunami_output(self, output_path: str):
         return Tsunami1DOutput(output_path)
@@ -476,8 +477,8 @@ class Tsunami1D_DPCalculation(DirectPerturbationCalculation):
                         + ','.join(map(str, row[6:8])) + f", {row[8]:1.4E}, {row[9]:1.4E}" + '\n')
 
 class Tsunami3DCE_DPCalculation(DirectPerturbationCalculation):
-    def __init__(self, case: Case, overwrite_output=False):
-        super().__init__(case, overwrite_output)
+    def __init__(self, case: Case, template_file, overwrite_output=False):
+        super().__init__(case, template_file, overwrite_output)
 
     def _get_tsunami_output(self, output_path: str):
         return Tsunami3DCEOutput(output_path)
@@ -536,5 +537,5 @@ if __name__ == '__main__':
     # Assume the nominal cases have already been run, now do the direct perturbation calculations
     for case in cases:
         # Now perform a direct perturbation calculation
-        calculation = Tsunami3DCE_DPCalculation(case)
+        calculation = Tsunami3DCE_DPCalculation(case, 'sphere_template_dp.inp')
         calculation.run_calculation()
