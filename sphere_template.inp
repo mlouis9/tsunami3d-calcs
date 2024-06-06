@@ -50,9 +50,9 @@ read parameters
 ' 100 generations total: 50 skipped, 150 active, 1,000 particles per generation = 200,000 particles total
     npg=10000
     nsk=20
-    gen=100
+    gen=2000
 ' Stop simulation once keff has converged to a relative standard deviation of 0.1%, or around 100 pcm since keff~1.0
-    sig=0.001
+    sig=0.0001
 ' Set TSUNAMI-3D mode for CE calculations, 2=IFP-based keff sensitivity
 ' Set the number of latent generations to 20
     cet=2
