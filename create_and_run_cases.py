@@ -11,7 +11,7 @@ if __name__ == '__main__':
         case.create_input_file('sphere_template.inp')
         case.run_case()
     else:
-        # RUn all inputs
+        # Run all inputs
         for case in cases:
             case.create_input_file('sphere_template.inp')
             case.run_case()

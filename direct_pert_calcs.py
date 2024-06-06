@@ -6,10 +6,12 @@ import numpy as np
 import os
 from abc import ABC, abstractmethod
 from uncertainties import ufloat
+import sys
 
 class Cases:
-    def __init__(self, case_parameters_yml, case_sequence):
+    def __init__(self, case_parameters_yml, case_sequence, num_cores=1):
         self.case_sequence = case_sequence
+        self.num_cores = num_cores
         self.cases = self._read_case_parameters(case_parameters_yml)
 
     def _read_case_parameters(self, case_parameters_yml: str):
@@ -52,7 +54,8 @@ class Cases:
                 reflector_material, 
                 reflector_radius, 
                 f'sphere_model_{model_number}.inp',
-                self.case_sequence
+                self.case_sequence,
+                self.num_cores
             )
             parsed_cases.append(this_case)
 
@@ -64,7 +67,8 @@ class Cases:
             case.run_case()
 
 class Case:
-    def __init__(self, model_number, heu_material, heu_radius, reflector_material, reflector_radius, case_input, case_sequence='tsunami-1d'):
+    def __init__(self, model_number, heu_material, heu_radius, reflector_material, reflector_radius, case_input, \
+                 case_sequence='tsunami-1d', num_cores=1):
         """Creates a case from a model number, HEU radius, reflector material, reflector radius, case input file, and
         optionally a case sequence, which defaults to tsunami-1d."""
 
@@ -75,7 +79,7 @@ class Case:
         self.reflector_radius = reflector_radius
         self.case_input = case_input
         self.case_sequence = case_sequence
-        
+        self.num_cores = num_cores
 
     def create_input_file(self, template_file: str):
         """
@@ -103,6 +107,8 @@ class Case:
 
     def run_case(self):
         # Run the case and wait for it to finish
+        if self.num_cores > 1:
+            proc = subprocess.Popen(['scalerte', self.case_input, f'-N {self.num_cores}'])
         proc = subprocess.Popen(['scalerte', self.case_input])
         proc.wait()
 
@@ -469,9 +475,12 @@ class Tsunami3DCE_DPCalculation(DirectPerturbationCalculation):
 
 if __name__ == '__main__':
     # First parse the cases
+    if len(sys.argv) > 1:
+        num_cores = int(sys.argv[1])
+
     cases = Cases('case_parameters.yml', case_sequence='tsunami-3d-keno6').cases
 
     # Assume the nominal cases have already been run, now do the direct perturbation calculations
     for case in cases:
         # Now perform a direct perturbation calculation
-        calculation = Tsunami3DCE_DPCalculation(case, 'sphere_template_dp.inp')
+        calculation = Tsunami3DCE_DPCalculation(case, 'sphere_template_dp.inp', )

@@ -1,0 +1,20 @@
+#!/bin/bash
+#PBS -l select=1:ncpus=40:mpiprocs=40
+#PBS -N sphere_model
+#PBS -l walltime=8:00:00
+#PBS -j oe
+#PBS -P edu_res
+
+cat $PBS_NODEFILE
+
+module load use.exp_ctl
+module load scale/6.3.1-gcc-11.2.0-openmpi-2.1.6
+module load mvapich2/2.3.7-1
+module load python/3.9-mambaforge-2021-10-15
+conda activate my-base
+
+cd $PBS_O_WORKDIR
+
+export TMPDIR=/tmp
+
+python direct_pert_calcs.py 40
