@@ -1,0 +1,19 @@
+#!/bin/bash
+#PBS -l select=1:ncpus=12:mpiprocs=12
+#PBS -N sphere_model
+#PBS -l walltime=8:00:00
+#PBS -j oe
+#PBS -P edu_res
+
+cat $PBS_NODEFILE
+
+module load use.exp_ctl
+module load scale
+module load mvapich2/2.3.7-1
+conda activate my-base
+
+cd $PBS_O_WORKDIR
+
+export TMPDIR=/tmp
+
+mpiexec -n 12 ./python_mpi_caller
