@@ -1,0 +1,71 @@
+=$sequence parm=(   )
+Sphere-model$model_number
+ce_v8.0
+
+read comp
+
+' HEU
+$heu_material
+
+'    u-234 1 0 4.9210E-4 end
+'    u-235 1 0 4.4917E-2 end
+'    u-238 1 0 2.5993E-3 end
+
+' Reflector Material
+$reflector_material
+
+' Depleted Uranium
+'    u-234 10 0 4.9210E-4 end
+'    u-235 10 0 3.4428E-4 end
+'    u-238 10 0 4.7470E-2 end
+'
+' Tungsten Carbide
+'    w-182 10 0 1.2697E-2 end
+'    w-183 10 0 6.8626E-3 end
+'    w-184 10 0 1.4754E-2 end
+'    w-186 10 0 1.3744E-2 end
+'    c          10 0 4.8057E-2 end
+'
+' Nickel
+'    Ni         10 0 9.1322E-2 end
+
+end comp
+
+read geometry
+
+global unit 1
+
+' Inner HEU sphere surrounded by an outer reflecting shell
+  sphere 1 $heu_radius   
+  sphere 2 $reflector_radius
+
+  media 1   1 1        vol=1306.66
+  media 10 1 2 -1    vol=6993.14
+
+  boundary 2
+
+end geometry
+
+read parameters
+' 100 generations total: 50 skipped, 150 active, 1,000 particles per generation = 200,000 particles total
+    npg=10000
+    nsk=20
+    gen=100
+' Stop simulation once keff has converged to a relative standard deviation of 0.1%, or around 100 pcm since keff~1.0
+    sig=0.001
+' Set TSUNAMI-3D mode for CE calculations, 2=IFP-based keff sensitivity
+' Set the number of latent generations to 20
+    cet=2
+    cfp=20  
+
+end parameters
+
+read bounds
+' Vaccum boundary
+    all=vacuum
+
+end bounds
+
+end data
+end
+

@@ -475,4 +475,3 @@ if __name__ == '__main__':
     for case in cases:
         # Now perform a direct perturbation calculation
         calculation = Tsunami3DCE_DPCalculation(case, 'sphere_template_dp.inp')
-        # calculation.run_calculation()
