@@ -10,7 +10,7 @@ cat $PBS_NODEFILE
 module load use.exp_ctl
 module load scale
 module load mvapich2/2.3.7-1
-python/3.9-mambaforge-2021-10-15
+module load python/3.9-mambaforge-2021-10-15
 conda activate my-base
 
 cd $PBS_O_WORKDIR
