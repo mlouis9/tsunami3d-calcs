@@ -108,8 +108,9 @@ class Case:
     def run_case(self):
         # Run the case and wait for it to finish
         if self.num_cores > 1:
-            proc = subprocess.Popen(['scalerte', self.case_input, f'-N {self.num_cores}'])
-        proc = subprocess.Popen(['scalerte', self.case_input])
+            proc = subprocess.Popen(['scalerte', self.case_input, '-N', f'{self.num_cores}'])
+        else: 
+            proc = subprocess.Popen(['scalerte', self.case_input])
         proc.wait()
 
 class Output:
@@ -283,13 +284,14 @@ class DirectPerturbationCalculation(ABC):
     """Class to perform direct perturbation calculations for a given case. This class will read the nominal output file and use
     the case parameters to perform the direct perturbation calculations. The results will be stored in the 
     nominal_total_sensitivity_coefficients and output as a .csv file."""
-    def __init__(self, case: Case, template_file, overwrite_output=False):
+    def __init__(self, case: Case, template_file, overwrite_output=False, num_cores=1):
         self.case = case
         self.overwrite_output = overwrite_output
         self.template_file = template_file
         nominal_output = self._get_tsunami_output(case.case_input.replace('.inp', '.out'))
         self.nominal_total_sensitivity_coefficients = nominal_output.total_sensitivity_coefficients
         self.nominal_keff = nominal_output.keff
+        self.num_cores = num_cores
 
         # Run the direct perturbation calculation for each nuclide and mixture in the nominal_total_sensitivity_coefficients dict
         print(f"Running direct perturbation calculation for model {(self.case).model_number}...")
@@ -390,7 +392,8 @@ class DirectPerturbationCalculation(ABC):
                 perturbed_reflector_material,
                 (self.case).reflector_radius,
                 f'sphere_model_{self.case.model_number}/perturbed_{nuclide}_{mixture}_{rho_index+1}.inp',
-                case_sequence=self._direct_calculation_sequence()
+                case_sequence=self._direct_calculation_sequence(),
+                num_cores=self.num_cores
             )
 
             # First, make sphere_model_{model_number} directory if it doesn't exist already
@@ -400,7 +403,7 @@ class DirectPerturbationCalculation(ABC):
             # Create the input file
             new_case.create_input_file(self.template_file)
 
-            print(f"""  Perturbing {nuclide} density with Δρ={rho_delta:1.4E} for mixture {mixture}...""")
+            print(f"""  Perturbing {nuclide} density with Δρ={rho_delta:1.4E} for mixture {mixture} [running on {self.num_cores} core(s)]...""")
             # Run the case if the output file doesn't already exist
             output_path = new_case.case_input.replace('.inp', '.out')
             if not os.path.exists(output_path) or self.overwrite_output:
@@ -461,8 +464,8 @@ class Tsunami1D_DPCalculation(DirectPerturbationCalculation):
         return 'tsunami-1dc'
 
 class Tsunami3DCE_DPCalculation(DirectPerturbationCalculation):
-    def __init__(self, case: Case, template_file, overwrite_output=False):
-        super().__init__(case, template_file, overwrite_output)
+    def __init__(self, case: Case, template_file, overwrite_output=False, num_cores=1):
+        super().__init__(case, template_file, overwrite_output, num_cores=num_cores)
 
     def _get_tsunami_output(self, output_path: str):
         return Tsunami3DCEOutput(output_path)
@@ -477,10 +480,12 @@ if __name__ == '__main__':
     # First parse the cases
     if len(sys.argv) > 1:
         num_cores = int(sys.argv[1])
+    else:
+        num_cores = 1
 
     cases = Cases('case_parameters.yml', case_sequence='tsunami-3d-keno6').cases
 
     # Assume the nominal cases have already been run, now do the direct perturbation calculations
     for case in cases:
         # Now perform a direct perturbation calculation
-        calculation = Tsunami3DCE_DPCalculation(case, 'sphere_template_dp.inp', )
+        calculation = Tsunami3DCE_DPCalculation(case, 'sphere_template_dp.inp', num_cores=num_cores)
